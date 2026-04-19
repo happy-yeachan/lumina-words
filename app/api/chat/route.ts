@@ -42,7 +42,7 @@ CRITICAL RULE: You MUST respond with a single valid JSON object and NOTHING else
 No markdown. No code fences. No extra text before or after the JSON.
 
 JSON schema (always use this exact shape):
-{"reply":"...","corrections":[]}
+{"reply":"...","translation":"...","corrections":[]}
 
 Rules for "reply":
 - 1 to 3 short, natural, conversational sentences.
@@ -51,20 +51,29 @@ Rules for "reply":
 - Match and stay within the current roleplay scenario.
 - Encourage the user to keep responding.
 
+Rules for "translation":
+- Translate your "reply" into natural Korean (한국어).
+- This is for the learner to understand your response.
+- Translate ONLY your reply, not anything else.
+
 Rules for "corrections":
-- ONLY add a correction if the user made a clear grammatical or vocabulary error.
-- Each item must have exactly these three keys:
-    "original"    — the exact wrong phrase the user wrote
+- ⚠️  ONLY evaluate the user's MOST RECENT message marked [EVALUATE THIS MESSAGE].
+- DO NOT evaluate previous messages in the conversation history.
+- DO NOT evaluate your own responses.
+- DO NOT invent corrections for things the user did not write.
+- Only flag a clear grammatical or vocabulary error that actually appears word-for-word in [EVALUATE THIS MESSAGE].
+- Each correction must have exactly these three keys:
+    "original"    — the exact wrong phrase copied from [EVALUATE THIS MESSAGE]
     "better"      — the correct or more natural English expression
     "explanation" — a concise explanation written in Korean (한국어)
 - Maximum 2 corrections per reply.
 - If there are no errors, use an empty array: []
 
 Example of a valid response (no errors):
-{"reply":"That sounds amazing! What did you like most about it?","corrections":[]}
+{"reply":"That sounds amazing! What did you like most about it?","translation":"정말 멋지네요! 가장 좋았던 게 뭐예요?","corrections":[]}
 
 Example of a valid response (one error):
-{"reply":"Nice! It sounds like you had a great time.","corrections":[{"original":"I buyed a new bag","better":"I bought a new bag","explanation":"'buy'의 과거형은 불규칙 동사로 'bought'를 사용해요."}]}`;
+{"reply":"Nice! It sounds like you had a great time.","translation":"좋아요! 정말 즐거운 시간을 보내셨군요.","corrections":[{"original":"I buyed a new bag","better":"I bought a new bag","explanation":"'buy'의 과거형은 불규칙 동사로 'bought'를 사용해요."}]}`;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -81,7 +90,7 @@ interface ChatRequestBody {
 // ─── JSON Parser ──────────────────────────────────────────────────────────────
 // LLMs occasionally wrap output in markdown code fences — strip defensively.
 
-function parseAiOutput(raw: string): ChatApiResponse {
+function parseAiOutput(raw: string, lastUserMessage: string): ChatApiResponse {
   const cleaned = raw
     .replace(/^```(?:json)?\s*/i, '')
     .replace(/\s*```$/, '')
@@ -89,22 +98,30 @@ function parseAiOutput(raw: string): ChatApiResponse {
 
   try {
     const parsed = JSON.parse(cleaned) as Partial<ChatApiResponse>;
+
+    const reply = typeof parsed.reply === 'string' && parsed.reply.length > 0
+      ? parsed.reply
+      : raw;
+
+    // Filter corrections: only keep ones whose "original" text actually appears
+    // in the user's latest message (case-insensitive). This is a client-side
+    // safeguard against the LLM hallucinating corrections from old messages.
+    const rawCorrections = Array.isArray(parsed.corrections) ? parsed.corrections : [];
+    const corrections = rawCorrections.filter(
+      (c): c is Correction =>
+        typeof c?.original === 'string' &&
+        typeof c?.better === 'string' &&
+        typeof c?.explanation === 'string' &&
+        lastUserMessage.toLowerCase().includes(c.original.toLowerCase()),
+    );
+
     return {
-      reply: typeof parsed.reply === 'string' && parsed.reply.length > 0
-        ? parsed.reply
-        : raw, // fallback: treat entire output as reply
-      corrections: Array.isArray(parsed.corrections)
-        ? parsed.corrections.filter(
-            (c): c is Correction =>
-              typeof c?.original === 'string' &&
-              typeof c?.better === 'string' &&
-              typeof c?.explanation === 'string'
-          )
-        : [],
+      reply,
+      translation: typeof parsed.translation === 'string' ? parsed.translation : '',
+      corrections,
     };
   } catch {
-    // LLM ignored format instructions — graceful degradation, no corrections
-    return { reply: raw, corrections: [] };
+    return { reply: raw, translation: '', corrections: [] };
   }
 }
 
@@ -125,7 +142,7 @@ async function callGroq(messages: Message[]): Promise<string> {
     body: JSON.stringify({
       model,
       messages,
-      max_tokens: 300,
+      max_tokens: 450,
       temperature: 0.75,
       // Ask Groq to enforce JSON output at the API level where supported
       response_format: { type: 'json_object' },
@@ -203,9 +220,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'messages array required' }, { status: 400 });
     }
 
-    const systemContent = scenario
-      ? `${SYSTEM_PROMPT}\n\nCurrent roleplay scenario: ${scenario}. Stay in this scenario.`
-      : SYSTEM_PROMPT;
+    // Extract the last user message so we can (a) inject it explicitly into the
+    // system prompt and (b) use it for client-side correction validation.
+    const lastUserMessage = [...messages].reverse().find((m) => m.role === 'user')?.content ?? '';
+
+    // Build system content: inject scenario + pin the exact message to grade.
+    // This is the primary fix for correction hallucination — the LLM is told
+    // exactly which text to evaluate and must not touch anything else.
+    const systemContent = [
+      SYSTEM_PROMPT,
+      scenario ? `\nCurrent roleplay scenario: ${scenario}. Stay in this scenario.` : '',
+      lastUserMessage
+        ? `\n\n[EVALUATE THIS MESSAGE] — the ONLY text you may write corrections for:\n"${lastUserMessage}"`
+        : '',
+    ].join('');
 
     const fullMessages: Message[] = [
       { role: 'system', content: systemContent },
@@ -217,7 +245,8 @@ export async function POST(req: NextRequest) {
         ? await callOllama(fullMessages)
         : await callGroq(fullMessages);
 
-    const parsed = parseAiOutput(rawOutput);
+    // Pass lastUserMessage so the parser can cross-check corrections.
+    const parsed = parseAiOutput(rawOutput, lastUserMessage);
 
     return NextResponse.json(parsed);
   } catch (error) {

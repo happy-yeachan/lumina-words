@@ -22,6 +22,7 @@ interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  translation?: string;  // Korean translation — only on assistant messages
   timestamp: Date;
   corrections: Correction[];
 }
@@ -39,6 +40,7 @@ interface PersistedSession {
     id: string;
     role: 'user' | 'assistant';
     content: string;
+    translation?: string;
     timestamp: string; // ISO string
     corrections: Correction[];
   }>;
@@ -192,6 +194,9 @@ function CorrectionCard({ correction }: { correction: Correction }) {
 
 function MessageBubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === 'user';
+  const [showTranslation, setShowTranslation] = useState(false);
+  const hasTranslation = !isUser && !!message.translation;
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 14, scale: 0.96 }}
@@ -205,19 +210,53 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         </div>
       )}
       <div className={cn('flex flex-col gap-1.5 max-w-[78%]', isUser ? 'items-end' : 'items-start')}>
-        <div className={cn(
-          'px-4 py-2.5 shadow-sm',
-          isUser
-            ? 'bg-indigo-600 text-white rounded-3xl rounded-br-lg'
-            : 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-100 dark:border-slate-700/50 rounded-3xl rounded-bl-lg'
-        )}>
+        {/* Main bubble — tap AI bubbles to reveal Korean translation */}
+        <div
+          onClick={() => hasTranslation && setShowTranslation((s) => !s)}
+          className={cn(
+            'px-4 py-2.5 shadow-sm',
+            isUser
+              ? 'bg-indigo-600 text-white rounded-3xl rounded-br-lg'
+              : 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-100 dark:border-slate-700/50 rounded-3xl rounded-bl-lg',
+            hasTranslation && 'cursor-pointer active:scale-[0.98] transition-transform'
+          )}
+        >
           <p className="text-sm leading-relaxed">{message.content}</p>
+
+          {/* Korean translation — revealed on tap */}
+          <AnimatePresence>
+            {showTranslation && message.translation && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.2, ease: 'easeOut' }}
+                className="overflow-hidden"
+              >
+                <div className="mt-2 pt-2 border-t border-slate-200/60 dark:border-slate-600/40">
+                  <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                    🇰🇷 {message.translation}
+                  </p>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Tap hint — only visible when translation available and not yet shown */}
+          {hasTranslation && !showTranslation && (
+            <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1 select-none">
+              탭해서 한국어 번역 보기
+            </p>
+          )}
         </div>
+
+        {/* Grammar correction cards */}
         {!isUser && message.corrections.length > 0 && (
           <div className="space-y-2 w-full">
             {message.corrections.map((c, i) => <CorrectionCard key={i} correction={c} />)}
           </div>
         )}
+
         <div className={cn('flex items-center gap-2', isUser ? 'flex-row-reverse' : 'flex-row')}>
           <span className="text-[10px] text-slate-400 dark:text-slate-500">{formatTime(message.timestamp)}</span>
           {!isUser && (
@@ -446,7 +485,9 @@ export default function ConversationPage() {
 
       const aiMsg: ChatMessage = {
         id: generateId(), role: 'assistant',
-        content: data.reply ?? '', timestamp: new Date(),
+        content: data.reply ?? '',
+        translation: data.translation ?? '',
+        timestamp: new Date(),
         corrections: data.corrections ?? [],
       };
 

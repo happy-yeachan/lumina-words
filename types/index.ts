@@ -69,6 +69,7 @@ export interface Correction {
 
 export interface ChatApiResponse {
   reply: string;
+  translation: string;   // Korean translation of "reply"
   corrections: Correction[];
 }
 
