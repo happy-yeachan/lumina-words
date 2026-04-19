@@ -79,20 +79,59 @@ function formatTime(date: Date) {
   return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
 }
 
-function getOpeningMessage(scenario: ScenarioDefinition): string {
-  const openers: Record<string, string> = {
-    'coffee-ny':            "Hey! Welcome in. What can I get started for you today?",
-    'immigration':          "Passport and customs declaration form, please. What's the purpose of your visit?",
-    'job-interview':        "Thanks for coming in! Great to meet you. So — tell me a bit about yourself.",
-    'hotel-checkin':        "Good evening and welcome! Do you have a reservation with us tonight?",
-    'restaurant-complaint': "Good evening! How is everything tasting so far?",
-    'alien-earth':          "Greetings, Earth creature! I have landed on your planet. I am puzzled by a substance on your table... you call it 'food'?",
-    'new-friend':           "Hey! This is a fun event, right? Have you been to one of these before?",
-    'tech-support':         "Thank you for calling support. My name is Alex. Can I get your account email to pull up your file?",
-    'doctor':               "Good morning! Come in, have a seat. So, what brings you in today?",
-    'taxi':                 "Hey! Where to? Hop in!",
+// ─── Opening Messages ─────────────────────────────────────────────────────────
+// Pre-written so the first AI bubble always has a tap-to-translate available.
+
+interface Opener { english: string; korean: string; }
+
+const OPENERS: Record<string, Opener> = {
+  'coffee-ny': {
+    english: "Hey! Welcome in. What can I get started for you today?",
+    korean:  "어서오세요! 오늘 뭐 드릴까요?",
+  },
+  'immigration': {
+    english: "Passport and customs declaration form, please. What's the purpose of your visit?",
+    korean:  "여권이랑 세관 신고서 주세요. 방문 목적이 뭔가요?",
+  },
+  'job-interview': {
+    english: "Thanks for coming in! Great to meet you. So — tell me a bit about yourself.",
+    korean:  "와주셔서 감사해요! 만나서 반갑습니다. 자기소개 부탁드릴게요.",
+  },
+  'hotel-checkin': {
+    english: "Good evening and welcome! Do you have a reservation with us tonight?",
+    korean:  "안녕하세요, 어서오세요! 오늘 예약하신 것 있으신가요?",
+  },
+  'restaurant-complaint': {
+    english: "Good evening! How is everything tasting so far?",
+    korean:  "안녕하세요! 지금까지 음식은 어떠세요?",
+  },
+  'alien-earth': {
+    english: "Greetings, Earth creature! I have landed on your planet. I am puzzled by a substance on your table... you call it 'food'?",
+    korean:  "안녕하세요, 지구 생명체! 저는 여러분의 행성에 착륙했어요. 테이블 위에 있는 저 물질이 뭔지 궁금한데요... 그게 '음식'이라는 건가요?",
+  },
+  'new-friend': {
+    english: "Hey! This is a fun event, right? Have you been to one of these before?",
+    korean:  "안녕하세요! 이 행사 재밌죠? 전에 이런 데 와본 적 있으세요?",
+  },
+  'tech-support': {
+    english: "Thank you for calling support. My name is Alex. Can I get your account email to pull up your file?",
+    korean:  "고객센터에 전화해 주셔서 감사합니다. 저는 Alex예요. 파일을 찾으려면 계정 이메일 알려주실 수 있을까요?",
+  },
+  'doctor': {
+    english: "Good morning! Come in, have a seat. So, what brings you in today?",
+    korean:  "좋은 아침이에요! 들어오세요, 앉으세요. 오늘 어떻게 오셨어요?",
+  },
+  'taxi': {
+    english: "Hey! Where to? Hop in!",
+    korean:  "어서오세요! 어디 가세요? 타세요!",
+  },
+};
+
+function getOpener(scenario: ScenarioDefinition): Opener {
+  return OPENERS[scenario.id] ?? {
+    english: `Hello! Ready to practice? Let's start — I'm your ${scenario.title} partner.`,
+    korean:  `안녕하세요! 연습할 준비 됐나요? 시작해봐요!`,
   };
-  return openers[scenario.id] ?? `Hello! Ready to practice? Let's start — I'm your ${scenario.title} partner.`;
 }
 
 // ─── Auto-save Corrections ────────────────────────────────────────────────────
@@ -435,10 +474,12 @@ export default function ConversationPage() {
   // ── Start a mission ───────────────────────────────────────────────────────
 
   const handleStartMission = useCallback((s: ScenarioDefinition) => {
+    const { english, korean } = getOpener(s);
     const opener: ChatMessage = {
       id: generateId(),
       role: 'assistant',
-      content: getOpeningMessage(s),
+      content: english,
+      translation: korean,
       timestamp: new Date(),
       corrections: [],
     };
@@ -736,9 +777,11 @@ export default function ConversationPage() {
                       <button
                         onClick={() => {
                           if (!scenario) return;
+                          const { english, korean } = getOpener(scenario);
                           const opener: ChatMessage = {
                             id: generateId(), role: 'assistant',
-                            content: getOpeningMessage(scenario),
+                            content: english,
+                            translation: korean,
                             timestamp: new Date(), corrections: [],
                           };
                           setMessages([opener]);
